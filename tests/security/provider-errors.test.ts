@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { appendFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { e2eBin } from '../../scripts/e2e-bin.ts';
 
@@ -36,6 +36,8 @@ for (const override of [false, true]) {
       matched = request.headers.authorization === 'Bearer ' + key;
       response.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { code: 401, message: diagnostic + ': ' + request.headers.authorization } }));
     });
+    // This test owns the page, not the CLI: a CLI killed by the watchdog cannot stop anything it started.
+    let app: { url: string; close(): Promise<void> } | undefined;
     let child: ReturnType<typeof spawn> | undefined;
     let closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -49,9 +51,11 @@ for (const override of [false, true]) {
       }
       await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
       const address = server.address(); assert.ok(address && typeof address !== 'string');
+      const serve = await import(pathToFileURL(join(project, 'scripts/serve.mjs')).href);
+      app = await serve.startApp();
       const env: NodeJS.ProcessEnv = {
         PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: join(project, '.tmp'),
-        SYNTHETIC_SECURITY_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+        SYNTHETIC_SECURITY_APP_URL: app!.url, SYNTHETIC_SECURITY_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
         OPENROUTER_MODEL: 'security-fixture-no-inference', OPENROUTER_PROVIDER: 'fixture-provider',
         OPENROUTER_API_KEY: override ? 'unused-SYNTHETIC-primary-key-135790' : key,
         ...(override ? { E2E_SECRET_OPENROUTER_API_KEY: key } : {}), OPENROUTER_REQUEST_TIMEOUT_MS: '3000',
@@ -97,6 +101,7 @@ for (const override of [false, true]) {
       }
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
+      await app?.close();
       await rm(project, { recursive: true, force: true });
       if (process.env.SECURITY_EVIDENCE_FILE) {
         Object.assign(evidence, { requests, matched, projectRemoved: await stat(project).then(() => false, () => true) });
