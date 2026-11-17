@@ -1,17 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { appendFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 
-/** Enumerate every generated file, including reports, cache, traces and binary media. */
+/** Include binary media, hidden cache, reports and traces in the leak check. */
 async function generatedFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
   const paths: string[] = [];
-  for (const entry of entries) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) paths.push(...await generatedFiles(path));
     else if (entry.isFile()) paths.push(path);
@@ -20,94 +19,94 @@ async function generatedFiles(directory: string): Promise<string[]> {
 }
 
 for (const override of [false, true]) {
-  test(`the real Mandu command redacts a key echoed by HTTP 401 (override=${override})`, { timeout: 30_000 }, async () => {
+  test(`real CLI redacts a loopback echo-401 key, override=${override}`, { timeout: 30_000 }, async () => {
     const root = fileURLToPath(new URL('../../', import.meta.url));
-    const project = await mkdtemp(join(tmpdir(), 'mandu-error-redaction-'));
-    const syntheticKey = override ? 'override-SYNTHETIC-key-246810' : 'security-SYNTHETIC-key-7654321';
+    const temporaryRoot = join(root, '.e2e/security-projects');
+    await mkdir(temporaryRoot, { recursive: true });
+    // Nest under the project so published dependencies resolve through ancestors, no copied trees/symlinks.
+    const project = await mkdtemp(join(temporaryRoot, 'echo401-'));
+    const key = override ? 'override-SYNTHETIC-openrouter-key-246810' : 'primary-SYNTHETIC-openrouter-key-7654321';
     const diagnostic = 'Synthetic authentication rejected';
-    let endpoint = '';
     let requests = 0;
-    let authorizationMatched = false;
+    let matched = false;
     const server = createServer(async (request, response) => {
       for await (const chunk of request) { void chunk; }
-      requests += 1;
-      authorizationMatched = request.headers.authorization === `Bearer ${syntheticKey}`;
-      response.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({
-        error: { message: `${diagnostic}: ${request.headers.authorization}; endpoint ${endpoint}` },
-      }));
+      requests++;
+      matched = request.headers.authorization === 'Bearer ' + key;
+      response.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { code: 401, message: diagnostic + ': ' + request.headers.authorization } }));
     });
+    let app: { url: string; close(): Promise<void> } | undefined;
     let child: ReturnType<typeof spawn> | undefined;
+    let closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    // Opt-in sanitized receipt (SECURITY_EVIDENCE_FILE): counts, booleans and artifact hashes only, never key or output text.
+    const evidence: Record<string, unknown> = { override };
     try {
-      for (const name of ['scripts', 'tests/e2e', 'dist', 'e2e.config.ts', 'e2e.mandu.config.ts', 'package.json', 'tsconfig.json']) {
-        await cp(join(root, name), join(project, name), { recursive: true });
+      const inputs = ['scripts/model.ts', 'scripts/configuration.ts', 'scripts/serve.mjs', 'e2e.config.ts', 'tests/e2e/agent.e2e.ts', 'e2e.security.config.ts', 'package.json', 'tsconfig.json', 'dist/index.html'];
+      for (const name of inputs) {
+        await mkdir(join(project, name, '..'), { recursive: true });
+        await cp(join(root, name), join(project, name));
       }
-      await symlink(join(root, 'node_modules'), join(project, 'node_modules'), 'dir');
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', resolve);
-      });
-      const address = server.address();
-      assert.ok(address && typeof address !== 'string');
-      endpoint = `http://127.0.0.1:${address.port}/v1`;
+      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+      const address = server.address(); assert.ok(address && typeof address !== 'string');
+      const serve = await import(pathToFileURL(join(project, 'scripts/serve.mjs')).href);
+      app = await serve.startApp();
       const env: NodeJS.ProcessEnv = {
-        PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
-        MANDU_BASE_URL: endpoint,
-        MANDU_MODEL: 'security-fixture-no-inference',
-        MANDU_API_KEY: override ? 'unused-SYNTHETIC-key-135790' : syntheticKey,
-        ...(override ? { E2E_SECRET_MANDU_API_KEY: syntheticKey } : {}),
-        MANDU_STRUCTURED_OUTPUTS: 'true', MANDU_MULTIPART_TOOL_CONTENT: 'true',
-        MANDU_REQUEST_TIMEOUT_MS: '3000',
+        PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: join(project, '.tmp'),
+        SYNTHETIC_APP_URL: app!.url, SYNTHETIC_SECURITY_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+        OPENROUTER_MODEL: 'security-fixture-no-inference', OPENROUTER_PROVIDER: 'fixture-provider',
+        OPENROUTER_API_KEY: override ? 'unused-SYNTHETIC-primary-key-135790' : key,
+        ...(override ? { E2E_SECRET_OPENROUTER_API_KEY: key } : {}), OPENROUTER_REQUEST_TIMEOUT_MS: '3000',
+        // Keep the CLI child offline: no usage telemetry, no registry update check, no user config writes.
+        E2E_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', E2E_UPDATE_CHECK_DISABLED: '1', XDG_CONFIG_HOME: join(project, '.config'),
       };
+      await mkdir(env.TMPDIR!, { recursive: true });
       let output = '';
-      child = spawn(process.execPath, ['scripts/run.mjs', 'mandu'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(process.execPath, [join(root, 'node_modules/e2e/dist/cli/bin.js'), 'run', 'tests/e2e/agent.e2e.ts', '--config', 'e2e.security.config.ts', '--no-cache', '--video', '--output', '.e2e/security'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
       child.stdout!.on('data', chunk => { output += chunk.toString(); });
       child.stderr!.on('data', chunk => { output += chunk.toString(); });
       const running = child;
-      const watchdog = setTimeout(() => running.kill('SIGKILL'), 20_000);
-      let exit: { code: number | null; signal: string | null };
-      try {
-        exit = await new Promise((resolve, reject) => {
-          running.once('error', reject);
-          running.once('close', (code, signal) => resolve({ code, signal }));
-        });
-      } finally { clearTimeout(watchdog); }
-      const outputDir = join(project, '.e2e');
-      const files = await generatedFiles(outputDir);
+      closed = new Promise((resolve, reject) => { running.once('error', reject); running.once('close', (code, signal) => resolve({ code, signal })); });
+      watchdog = setTimeout(() => running.kill('SIGKILL'), 20_000);
+      const exit = await closed;
+      clearTimeout(watchdog);
+      evidence.exit = exit;
+      assert.equal(exit.signal, null, 'CLI must exit normally, not via watchdog');
+      assert.equal(exit.code, 3, 'Provider authentication failure must preserve exit 3');
+      assert.equal(requests, 1, '401 must not be retried');
+      assert.ok(matched, 'Effective key must authenticate only to the test loopback server');
+      const outputDir = join(project, '.e2e/security');
+      const report = await readFile(join(outputDir, 'report.json'), 'utf8');
+      for (const text of [output, report]) {
+        assert.ok(text.includes('MODEL_PROVIDER_FAILED') && text.includes(diagnostic));
+        assert.ok(text.includes('<secret:openrouter-api-key>'));
+        assert.ok(!text.includes(key));
+      }
       const leaked: string[] = [];
-      for (const path of files) {
-        if ((await readFile(path)).includes(Buffer.from(syntheticKey))) leaked.push(path.slice(outputDir.length + 1));
+      const scanned: { path: string; bytes: number; sha256: string }[] = [];
+      for (const path of await generatedFiles(join(project, '.e2e'))) {
+        const bytes = await readFile(path);
+        scanned.push({ path: path.slice(project.length + 1), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+        if (bytes.includes(Buffer.from(key))) leaked.push(path.slice(project.length + 1));
       }
-      const reportText = await readFile(join(outputDir, 'mandu/report.json'), 'utf8');
-      const evidence = process.env.MANDU_SECURITY_EVIDENCE_DIR
-        ? join(process.env.MANDU_SECURITY_EVIDENCE_DIR, override ? 'override' : 'primary') : undefined;
-      if (evidence) {
-        await mkdir(evidence, { recursive: true });
-        await writeFile(join(evidence, 'cli.log'), output);
-        await writeFile(join(evidence, 'scan.json'), JSON.stringify({
-          exit, requests, authorizationMatched, syntheticKeyInCli: output.includes(syntheticKey),
-          endpointInCli: output.includes(endpoint), endpointInReport: reportText.includes(endpoint),
-          diagnosticInCli: output.includes(diagnostic), diagnosticInReport: reportText.includes(diagnostic),
-          markerInCli: output.includes('<secret:mandu-api-key>'),
-          markerInReport: reportText.includes('<secret:mandu-api-key>'),
-          scannedFiles: files.map(path => path.slice(outputDir.length + 1)), leakedFiles: leaked,
-        }, null, 2) + '\n');
-        await cp(outputDir, join(evidence, 'artifacts'), { recursive: true });
-      }
-      assert.equal(exit.signal, null, 'The command must fail normally, not be killed');
-      assert.equal(exit.code, 3, 'HTTP authentication failure must preserve the CLI provider-error exit code');
-      assert.equal(requests, 1);
-      assert.ok(authorizationMatched, 'The synthetic key must reach only the loopback server');
-      assert.ok(output.includes('MODEL_PROVIDER_FAILED') && output.includes(diagnostic), 'A useful provider diagnostic must remain visible');
-      assert.ok(reportText.includes('MODEL_PROVIDER_FAILED') && reportText.includes(diagnostic), 'The report must retain the failure diagnostic');
-      assert.ok(!output.includes(syntheticKey), 'The CLI must not print the synthetic key');
-      assert.deepEqual(leaked, [], 'No generated artifact may contain the synthetic key');
-      assert.ok(output.includes('<secret:mandu-api-key>'), 'The CLI must show the harness redaction marker');
-      assert.ok(reportText.includes('<secret:mandu-api-key>'), 'The report must show the harness redaction marker');
+      Object.assign(evidence, { scanned, leaked: leaked.length });
+      assert.deepEqual(leaked, [], 'No artifact, trace, cache or media may retain the effective key');
     } finally {
-      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (watchdog) clearTimeout(watchdog);
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        if (closed) await Promise.race([closed.catch(() => undefined), new Promise(resolve => setTimeout(resolve, 2_000))]);
+      }
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
+      await app?.close();
       await rm(project, { recursive: true, force: true });
+      if (process.env.SECURITY_EVIDENCE_FILE) {
+        Object.assign(evidence, { requests, matched, projectRemoved: await stat(project).then(() => false, () => true) });
+        // An unwritable optional receipt must never replace the test's own result.
+        try { await appendFile(process.env.SECURITY_EVIDENCE_FILE, JSON.stringify(evidence) + '\n'); }
+        catch { console.warn('SECURITY_EVIDENCE_FILE: optional receipt not written.'); }
+      }
     }
   });
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { mkdir, writeFile } from 'node:fs/promises';
 
 interface Message {
   role: string;
@@ -12,22 +13,29 @@ interface RequestBody {
   messages: Message[];
   tools?: { type: string; function: { name: string; parameters: unknown } }[];
   tool_choice?: unknown;
+  provider?: { require_parameters: boolean; allow_fallbacks: boolean; only: string[]; order: string[] };
   response_format?: { type: string; json_schema?: { schema: unknown } };
 }
-type Mode = 'text' | 'tool' | 'schema' | 'agent' | 'timeout' | 'disconnect' | 'malformed' | 'schema-invalid' | 'partial-usage';
+type Mode = 'text' | 'tool' | 'schema' | 'agent' | 'timeout' | 'disconnect' | 'malformed' | 'schema-invalid' | 'reported-usage';
+let fixtureSequence = 0;
 
 /** Scripted HTTP contract fixture: no inference, no tokens or service latency invented. */
 export async function startFixture(mode: Mode) {
+  const sequence = ++fixtureSequence;
   const requests: RequestBody[] = [];
+  const responses: unknown[] = [];
   const errors: string[] = [];
   const server = createServer(async (request, response) => {
     try {
       assert.equal(request.method, 'POST');
       assert.equal(request.url, '/v1/chat/completions');
       let raw = '';
-      for await (const chunk of request) raw += chunk;
+      for await (const chunk of request) { raw += chunk; assert.ok(raw.length < 512_000); }
       const body = JSON.parse(raw) as RequestBody;
       assert.equal(body.model, 'fixture-only-no-inference');
+      assert.deepEqual(body.provider, { require_parameters: true, allow_fallbacks: false, only: ['fixture-provider'], order: ['fixture-provider'] });
+      assert.ok(requests.length < 8);
+      assert.equal(request.headers.authorization, 'Bearer SYNTHETIC-FIXTURE-KEY');
       assert.ok(Array.isArray(body.messages));
       requests.push(body);
       if (mode === 'timeout') return;
@@ -61,12 +69,14 @@ export async function startFixture(mode: Mode) {
         }
       }
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(mode === 'malformed' ? { invalid: true } : {
+      const payload = mode === 'malformed' ? { invalid: true } : {
         id: `fixture-${requests.length}`, object: 'chat.completion', created: 0,
         model: body.model,
-        ...(mode === 'partial-usage' ? { usage: { prompt_tokens: 11 } } : {}),
+        ...(mode === 'reported-usage' ? { usage: { prompt_tokens: 11, completion_tokens: 2, total_tokens: 13, cost: 0.004 } } : {}),
         choices: [{ index: 0, message, finish_reason: finishReason }],
-      }));
+      };
+      responses.push(payload);
+      response.end(JSON.stringify(payload));
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
       response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: errors.at(-1) } }));
@@ -80,9 +90,12 @@ export async function startFixture(mode: Mode) {
   assert.ok(address && typeof address !== 'string');
   return {
     baseURL: `http://127.0.0.1:${address.port}/v1`, requests, errors,
-    close: () => new Promise<void>((resolve, reject) => {
+    close: async () => {
       server.closeAllConnections();
-      server.close(error => error ? reject(error) : resolve());
-    }),
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      const directory = new URL('../.e2e/contract-wire/', import.meta.url);
+      await mkdir(directory, { recursive: true });
+      await writeFile(new URL(`${sequence}-${mode}.json`, directory), JSON.stringify({ kind: 'synthetic-loopback-no-inference', mode, requests, responses, errors }, null, 2) + '\n');
+    },
   };
 }

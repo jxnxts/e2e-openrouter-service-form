@@ -4,10 +4,11 @@ import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { startApp } from './serve.mjs';
 import { startFixture } from './fixture.ts';
-import { manduSettings } from './model.ts';
+import { openRouterConfiguration } from './model.ts';
+import { runnerEnvironment } from './runner-environment.ts';
 
 const mode = process.argv[2];
-if (!['deterministic', 'contract', 'mandu'].includes(mode)) throw new Error('Modo: deterministic, contract ou mandu.');
+if (!['deterministic', 'contract', 'openrouter'].includes(mode)) throw new Error('Modo: deterministic, contract ou openrouter.');
 const root = fileURLToPath(new URL('../', import.meta.url));
 let app;
 let fixture;
@@ -17,21 +18,15 @@ let interrupted = false;
 const interrupt = () => { interrupted = true; child?.kill('SIGTERM'); };
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, interrupt);
 try {
-  if (mode === 'mandu') manduSettings();
+  if (mode === 'openrouter') openRouterConfiguration();
   app = await startApp();
   if (mode === 'contract') fixture = await startFixture('agent');
   if (interrupted) throw new Error('Execução interrompida.');
-  const env = {
-    ...process.env, SYNTHETIC_APP_URL: app.url,
-    SYNTHETIC_METRICS_FILE: fileURLToPath(new URL(`../.e2e/${mode}/requests.ndjson`, import.meta.url)),
-  };
-  if (fixture) Object.assign(env, {
-    MANDU_BASE_URL: fixture.baseURL, MANDU_MODEL: 'fixture-only-no-inference',
-    MANDU_STRUCTURED_OUTPUTS: 'true', MANDU_MULTIPART_TOOL_CONTENT: 'true', MANDU_API_KEY: '', E2E_SECRET_MANDU_API_KEY: '', MANDU_REQUEST_TIMEOUT_MS: '2000',
-  });
-  const config = mode === 'deterministic' ? 'e2e.config.ts' : 'e2e.mandu.config.ts';
+  const env = runnerEnvironment(mode, process.env, app.url,
+    fileURLToPath(new URL(`../.e2e/${mode}/requests.ndjson`, import.meta.url)), fixture?.baseURL);
+  const config = mode === 'deterministic' ? 'e2e.config.ts' : mode === 'contract' ? 'e2e.contract.config.ts' : 'e2e.openrouter.config.ts';
   const test = mode === 'deterministic' ? 'deterministic' : 'agent';
-  console.log(mode === 'contract' ? 'CONTRATO LOCAL SCRIPTADO: não executa Mandu, Qwen ou GLM.' : `Modo: ${mode}`);
+  console.log(mode === 'contract' ? 'CONTRATO LOCAL SCRIPTADO: sem inferência.' : `Modo: ${mode}`);
   await rm(new URL(`../.e2e/${mode}/`, import.meta.url), { recursive: true, force: true });
   await mkdir(new URL(`../.e2e/${mode}/`, import.meta.url), { recursive: true });
   child = spawn(process.execPath, [
