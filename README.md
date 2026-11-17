@@ -6,7 +6,7 @@ Tudo acontece na página, sem banco, órgão público ou solicitação real. A a
 
 ## Instalar e construir
 
-Use Node `^22.22.3 || >=24.8.0`. A verificação local usou Node 24.22.2, e2e 0.23.1, web 0.16.0, AI SDK 7.0.173 e provider OpenRouter 3.1.0. O lockfile fixa versões e integridade.
+Use Node `^22.22.3 || >=24.8.0`. Última verificação local em 2026-11-17, com Node 24.22.2, e2e 0.23.1, `@e2e-dev/web` 0.16.0, AI SDK 7.0.173 e provider OpenRouter 3.1.0. O lockfile fixa versões e integridade.
 
 ```sh
 npm ci --ignore-scripts
@@ -61,14 +61,17 @@ O adapter oficial transporta screenshots em `role: tool` com conteúdo multipart
 
 ## Resultados e limites
 
-| Verificação neste candidato | Resultado |
+| Verificação | Resultado |
 | --- | --- |
-| Build e tipos | Passaram |
-| Contratos locais sem navegador | Passaram |
-| Locators com Chromium | Passaram (2/2, `test:offline` local) |
-| Agente scriptado com Chromium | Passou (1/1, fixture sem inferência) |
-| Segurança de erros na execução completa do e2e | Passou (principal e override, `test:offline` local) |
-| Fluxo completo do aplicativo com OpenRouter | Não executado |
+| Build e tipos | Passaram (`test:offline`, 2026-11-17) |
+| Contratos locais sem navegador | Passaram (29/29, `test:offline`, 2026-11-17) |
+| Locators com Chromium | Passaram (2/2, `test:offline`, 2026-11-17) |
+| Agente scriptado com Chromium | Passou (1/1, fixture sem inferência, `test:offline`, 2026-11-17) |
+| Segurança de erros na execução completa do e2e | Passou (chave principal e override, `test:offline`, 2026-11-17) |
+| Fluxo completo do aplicativo com OpenRouter | Passou uma vez (`test:openrouter`, 2026-11-15) |
+| Leitura de screenshots por um modelo real | Não exercitada |
+
+O fluxo completo com OpenRouter passou em uma execução, com `OPENROUTER_MODEL='openai/gpt-4.1-mini'` e `OPENROUTER_PROVIDER='openai'`. Foram oito passos, com três assertions do status `DEMO-0001`, e duas chamadas de modelo com HTTP 200. O custo informado pela OpenRouter foi US$ 0,0025740. O agente usou a estrutura da página e não enviou imagens ao modelo, então essa execução não valida a leitura de screenshots. Uma execução aprovada não comprova confiabilidade, e outro modelo ou provider pode se comportar de outra forma. Depois dessa execução só este README mudou.
 
 As execuções com navegador escrevem `report.json`, trace, screenshots e vídeo em `.e2e/deterministic/`, `.e2e/contract/` ou `.e2e/openrouter/`. `metrics.json` e `requests.ndjson` registram versão, modelo, provider, status HTTP e duração de ida e volta no cliente. Tokens e custo em USD vêm somente de campos numéricos efetivamente presentes em `usage.prompt_tokens`, `usage.completion_tokens` e `usage.cost` da resposta. Zero omitido pelo servidor não vira uma medição. Duração no cliente não é latência de inferência informada pelo serviço.
 
