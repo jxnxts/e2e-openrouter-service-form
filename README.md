@@ -1,82 +1,71 @@
-# Gerar um protocolo fictício com agente e locators
+# A service request form tested with locators and one agent step on OpenRouter
 
-A aplicação em português recebe um nome e um pedido sintéticos e mostra o protocolo fixo `DEMO-0001`. O teste preenche o formulário com locators, pede ao `agent.act` que gere o protocolo e confirma nome, pedido e aviso de ausência de envio real com assertions determinísticas.
+The page under test is a synthetic citizen-service request form, written in Portuguese. You type a name and a request, press "Gerar protocolo fictício", and the page shows the fixed protocol `DEMO-0001`. Everything happens in the page: there is no backend, no real agency and no real data.
 
-Tudo acontece na página, sem banco, órgão público ou solicitação real. A aplicação não usa marcas de governo. O agente usa o provider oficial `@openrouter/ai-sdk-provider`, já suportado pelo e2e, com a chave OpenRouter do leitor. Nenhum acesso a serviço privado é necessário.
+The example has two test files:
 
-## Instalar e construir
+- [`tests/e2e/deterministic.e2e.ts`](tests/e2e/deterministic.e2e.ts) uses locators only. An empty form is refused, and a filled form shows the protocol.
+- [`tests/e2e/agent.e2e.ts`](tests/e2e/agent.e2e.ts) fills the form with locators, asks `agent.act` to generate the protocol, then checks the name, the request and the "no real submission" notice with locator assertions.
 
-Use Node `^22.22.3 || >=24.8.0`. Última verificação local em 2026-11-17, com Node 24.22.2, e2e 0.23.1, `@e2e-dev/web` 0.16.0, AI SDK 7.0.173 e provider OpenRouter 3.1.0. O lockfile fixa versões e integridade.
+The form labels, the agent instruction and the messages the scripts print are in Portuguese. This page and [`docs/harness.md`](docs/harness.md) are in English.
+
+## Install
+
+Use Node `^22.22.3 || >=24.8.0`.
 
 ```sh
 npm ci --ignore-scripts
 npm run build
 ```
 
-O build verifica tipos e copia `app/` para `dist/`. Os testes usam os pacotes publicados, sem importar código do monorepo e2e.
+`npm run build` type-checks the project and copies the page to `dist/`, which the tests serve. If Chromium is not installed for Playwright yet, run `npm exec -- playwright-core install chromium` once.
 
-## Contratos locais sem navegador ou inferência
+## Run offline
 
 ```sh
-npm run test:offline-contract
+npx e2e run
 ```
 
-Esse comando faz build e executa os contratos locais. Verifica configuração obrigatória, chave principal e override no mesmo registro de secrets e autenticação, routing sem fallback, imagem de usuário, imagem em resultado de ferramenta, tool choice, parsing, JSON Schema, timeout, desconexão e métricas do HTTP. Os contadores fabricados da fixture testam apenas a coleta. Uso ausente é omitido das métricas, mesmo quando o SDK o normaliza para zero.
+This runs the two locator tests. The runner starts the page itself on a free loopback port and stops it afterwards (`app.command` in [`e2e.config.ts`](e2e.config.ts)). It needs no key and calls no model.
 
-Os contratos e o modo scriptado removem chaves de produção e o override do ambiente do processo filho. O modelo da fixture é literal. Os contratos recusam tráfego não loopback antes do fetch e usam dados sintéticos, `maxRetries: 0` e limites de tempo. Nenhum contrato comprova inferência, compreensão visual, aplicação das regras pelo servidor ou redação dos erros pela execução completa do e2e.
-
-## Testes com navegador
-
-Em um ambiente que permita executar Chromium:
+To run everything that needs no model:
 
 ```sh
-npm exec -- playwright-core install chromium
-npm test
-npm run test:agent-contract
+npm run test:offline
 ```
 
-`npm test` executa dois testes determinísticos com locators. `test:agent-contract` usa o mesmo teste de agente com uma sequência HTTP scriptada de screenshot, tap e conclusão. O resultado esperado continua sendo `DEMO-0001`, sem inferência. `test:security` verifica erros do CLI com servidor loopback que ecoa uma chave sintética em HTTP 401, tanto para chave principal quanto override. O teste exige saída 3, diagnóstico útil, marcador de redação e ausência da chave no terminal e em todos os artefatos, incluindo trace, cache e mídia. Usa configuração pertencente ao teste, `e2e.security.config.ts`, na raiz do projeto, porque o e2e trata a pasta do arquivo de configuração como raiz; não permite redirecionar o endpoint de produção. O CLI filho roda com telemetria e verificação de atualização desligadas e com `XDG_CONFIG_HOME` próprio. Esse teste precisa de navegador. `test:offline` combina build, contratos, segurança e esses testes com navegador. Ter contratos verdes não significa que `test:offline` passou.
+That adds the provider contract tests, the key redaction test and the agent test against a scripted local fixture. [`docs/harness.md`](docs/harness.md) says what each one covers.
 
-## Executar o agente com OpenRouter
+## Run the agent step with your own OpenRouter key
 
-Crie sua conta e sua própria chave em [OpenRouter](https://openrouter.ai/settings/keys). Consulte o [guia oficial](https://openrouter.ai/docs/quickstart) e o [catálogo de modelos](https://openrouter.ai/models). Escolha um modelo e um slug de provider/endpoint que anunciem ferramentas, tool choice, imagens e JSON Schema. Confira o [routing por provider](https://openrouter.ai/docs/guides/routing/provider-selection). Esses anúncios não comprovam o fluxo deste exemplo.
+Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys), then pick a model and a provider slug from the [model list](https://openrouter.ai/models) that support tool calls. There is no default model or provider.
 
-Injete `OPENROUTER_API_KEY` pelo seu gerenciador de segredos ou pelo ambiente da sessão. Não coloque a chave em chat, código, argumentos de CLI, screenshots ou commits. O projeto não lê `.env` automaticamente.
+Set `OPENROUTER_API_KEY` in your shell or from your secret manager. The project does not read `.env`.
 
 ```sh
-export OPENROUTER_MODEL='<MODEL_ID_EXPLICITO>'
-export OPENROUTER_PROVIDER='<SLUG_EXPLICITO_DO_PROVIDER_OU_ENDPOINT>'
-export OPENROUTER_REQUEST_TIMEOUT_MS=20000
-npm run build
+export OPENROUTER_MODEL='openai/gpt-4.1-mini'
+export OPENROUTER_PROVIDER='openai'
 npm run test:openrouter
 ```
 
-Substitua os placeholders. Não há modelo ou provider padrão. A ausência de chave, modelo ou provider encerra o comando antes de iniciar aplicação ou navegador. Uma falha real não pula o teste nem ativa fixture.
+The model and provider above are the pair the recorded run used. To try another pair, name it in the same two variables; only this pair has been run. The command refuses to start if the key, the model or the provider is missing. It then runs `e2e run --config e2e.openrouter.config.ts --no-cache --video --output .e2e/openrouter`. Each run calls the model and is billed to your key.
 
-O mesmo modelo recebe `require_parameters: true`, `allow_fallbacks: false` e `only`/`order` com o slug explícito em todas as chamadas. Não há lista de modelos alternativos. O timeout por request aceita 1-60000 ms, padrão 20000. A configuração usa um worker, zero retries do teste, timeout de teste de 60 segundos e orçamento de oito turnos lógicos do modelo. Isso não limita o fluxo a oito requisições HTTP: o e2e permite cinco retries de transporte por chamada, e reparos podem gerar outras requisições. O timeout de teste não inclui necessariamente todo o tempo de inicialização e limpeza do navegador; não é um limite comprovado do processo inteiro. Redirect HTTP é recusado. Todos os modos usam `--no-cache`.
+Every call goes to the provider you named and nowhere else. This is the call in [`scripts/model.ts`](scripts/model.ts):
 
-O override `E2E_SECRET_OPENROUTER_API_KEY`, quando definido, substitui `OPENROUTER_API_KEY`. A configuração resolve o valor uma vez e o usa tanto no provider quanto em `config.secrets['openrouter-api-key']`. Uma chave presente precisa ter ao menos seis caracteres ASCII válidos para bearer, sem espaços, controles ou quebras de linha. Valores inválidos são recusados antes da aplicação/navegador, sem imprimir nem corrigir o valor. Sintaxe válida não comprova autenticação no serviço. Os contratos conferem essa correspondência, mas a redação da chave em terminal, relatórios e mídia pelo e2e ainda exige validação própria.
+```ts
+return provider.chat(settings.model, { provider: {
+  require_parameters: true, allow_fallbacks: false, only: [settings.provider], order: [settings.provider],
+} });
+```
 
-O adapter oficial transporta screenshots em `role: tool` com conteúdo multipart e `image_url`. Esse transporte passou em loopback. Sondagens SDK separadas observaram vermelho e, em uma execução anterior, laranja para o mesmo PNG vermelho no modelo original. Um teste posterior passou nesse modelo e em Haiku 4.5. Essas amostras não comprovam interpretação visual geral, normalização interna ou o fluxo completo do aplicativo. Suporte a imagem de usuário sozinho não basta para aceitar screenshots retornados por ferramentas.
+`provider` comes from `createOpenRouter` in `@openrouter/ai-sdk-provider`, and `settings` holds the model and provider slug from the two variables above.
 
-## Resultados e limites
+## What has been checked
 
-| Verificação | Resultado |
-| --- | --- |
-| Build e tipos | Passaram (`test:offline`, 2026-11-17) |
-| Contratos locais sem navegador | Passaram (29/29, `test:offline`, 2026-11-17) |
-| Locators com Chromium | Passaram (2/2, `test:offline`, 2026-11-17) |
-| Agente scriptado com Chromium | Passou (1/1, fixture sem inferência, `test:offline`, 2026-11-17) |
-| Segurança de erros na execução completa do e2e | Passou (chave principal e override, `test:offline`, 2026-11-17) |
-| Fluxo completo do aplicativo com OpenRouter | Passou uma vez (`test:openrouter`, 2026-11-15) |
-| Leitura de screenshots por um modelo real | Não exercitada |
+Last checked on 2026-11-17 with Node 24.22.2, e2e 0.23.1, `@e2e-dev/web` 0.16.0, AI SDK 7.0.173 and the OpenRouter provider 3.1.0.
 
-O fluxo completo com OpenRouter passou em uma execução, com `OPENROUTER_MODEL='openai/gpt-4.1-mini'` e `OPENROUTER_PROVIDER='openai'`. Foram oito passos, com três assertions do status `DEMO-0001`, e duas chamadas de modelo com HTTP 200. O custo informado pela OpenRouter foi US$ 0,0025740. O agente usou a estrutura da página e não enviou imagens ao modelo, então essa execução não valida a leitura de screenshots. Uma execução aprovada não comprova confiabilidade, e outro modelo ou provider pode se comportar de outra forma. Depois dessa execução só este README mudou.
+- Offline, 2026-11-17: `npx e2e run` and `npm run test:offline` pass. That is the build, 29 provider contract tests, 2 key redaction tests through the real CLI, 2 locator tests and 1 agent test against the scripted fixture.
+- With OpenRouter: one run passed on 2026-11-15, with `openai/gpt-4.1-mini` routed to `openai`. It made 2 model calls and OpenRouter reported a cost of $0.0025740. That run used the previous version of this example, before the runner started the page and before the scripts called the `e2e` bin. It has not been repeated on this version.
+- The agent read the page structure in that run and sent no images, so a model reading screenshots is not covered. One passing run does not show reliability, and another model or provider may behave differently.
 
-As execuções com navegador escrevem `report.json`, trace, screenshots e vídeo em `.e2e/deterministic/`, `.e2e/contract/` ou `.e2e/openrouter/`. `metrics.json` e `requests.ndjson` registram versão, modelo, provider, status HTTP e duração de ida e volta no cliente. Tokens e custo em USD vêm somente de campos numéricos efetivamente presentes em `usage.prompt_tokens`, `usage.completion_tokens` e `usage.cost` da resposta. Zero omitido pelo servidor não vira uma medição. Duração no cliente não é latência de inferência informada pelo serviço.
-
-Prompts, headers, URLs e respostas não entram nas métricas customizadas. Os demais artefatos do e2e podem incluir tela, dados sintéticos e diagnósticos do modelo. Revise tudo antes de compartilhar. `node_modules/`, `dist/`, `.e2e/` e `.env*` são ignorados.
-
-Para olhar a aplicação localmente, execute `npm start` após o build. O terminal imprime a URL loopback com porta efêmera. Encerre com Ctrl+C.
-
-Código do fluxo: [locators](tests/e2e/deterministic.e2e.ts) e [agente](tests/e2e/agent.e2e.ts). Configuração do modelo: [scripts/model.ts](scripts/model.ts). Licença: [Apache-2.0](LICENSE).
+License: [Apache-2.0](LICENSE).
