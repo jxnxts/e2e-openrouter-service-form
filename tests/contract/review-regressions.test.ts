@@ -32,7 +32,7 @@ for (const override of [false, true]) {
 for (const [label, value] of [['absent', undefined], ['nonempty', 'SYNTHETIC-SHELL-OVERRIDE'], ['empty', '']] as const) {
   test(`contract child isolates actual e2e secret resolution, override=${label}`, async () => {
     const parent: NodeJS.ProcessEnv = { OPENROUTER_API_KEY: 'SYNTHETIC-PARENT-KEY', ...(value === undefined ? {} : { E2E_SECRET_OPENROUTER_API_KEY: value }) };
-    const env = runnerEnvironment('contract', parent, 'http://127.0.0.1:1', '/unused/synthetic-metrics', 'http://127.0.0.1:2/v1');
+    const env = runnerEnvironment('contract', parent, '/unused/synthetic-metrics', 'http://127.0.0.1:2/v1');
     assert.equal(env.OPENROUTER_API_KEY, undefined);
     assert.equal(env.E2E_SECRET_OPENROUTER_API_KEY, undefined);
     assert.deepEqual(parent, { OPENROUTER_API_KEY: 'SYNTHETIC-PARENT-KEY', ...(value === undefined ? {} : { E2E_SECRET_OPENROUTER_API_KEY: value }) });
@@ -53,7 +53,7 @@ for (const [label, value] of [['absent', undefined], ['nonempty', 'SYNTHETIC-SHE
 
 test('live child preserves explicit override behavior without mutating parent', () => {
   const parent = { OPENROUTER_API_KEY: 'SYNTHETIC-PRIMARY', E2E_SECRET_OPENROUTER_API_KEY: 'SYNTHETIC-OVERRIDE' };
-  const env = runnerEnvironment('openrouter', parent, 'http://127.0.0.1:1', '/unused/metrics');
+  const env = runnerEnvironment('openrouter', parent, '/unused/metrics');
   assert.equal(env.OPENROUTER_API_KEY, parent.OPENROUTER_API_KEY);
   assert.equal(env.E2E_SECRET_OPENROUTER_API_KEY, parent.E2E_SECRET_OPENROUTER_API_KEY);
 });

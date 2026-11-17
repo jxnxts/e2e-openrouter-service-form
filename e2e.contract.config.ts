@@ -5,5 +5,5 @@ import { loopbackBaseURL } from './scripts/model.ts';
 
 const baseURL = loopbackBaseURL(process.env.SYNTHETIC_FIXTURE_URL ?? '');
 export default {
-  ...base, ...openRouterAgent(fixtureConfiguration(), { baseURL, fetch: globalThis.fetch }, process.env.SYNTHETIC_METRICS_FILE),
+  ...base, tests: ['tests/e2e/agent.e2e.ts'], ...openRouterAgent(fixtureConfiguration(), { baseURL, fetch: globalThis.fetch }, process.env.SYNTHETIC_METRICS_FILE),
 } satisfies E2EConfig;

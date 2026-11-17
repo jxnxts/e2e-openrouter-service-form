@@ -7,5 +7,5 @@ import { openRouterAgent } from './scripts/configuration.ts';
 const settings = openRouterConfiguration();
 const baseURL = loopbackBaseURL(process.env.SYNTHETIC_SECURITY_BASE_URL ?? '');
 export default {
-  ...base, ...openRouterAgent(settings, { baseURL, fetch: globalThis.fetch }),
+  ...base, tests: ['tests/e2e/agent.e2e.ts'], ...openRouterAgent(settings, { baseURL, fetch: globalThis.fetch }),
 } satisfies E2EConfig;

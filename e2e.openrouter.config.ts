@@ -4,4 +4,4 @@ import { openRouterConfiguration } from './scripts/model.ts';
 import { openRouterAgent } from './scripts/configuration.ts';
 
 const settings = openRouterConfiguration();
-export default { ...base, ...openRouterAgent(settings, undefined, process.env.SYNTHETIC_METRICS_FILE) } satisfies E2EConfig;
+export default { ...base, tests: ['tests/e2e/agent.e2e.ts'], ...openRouterAgent(settings, undefined, process.env.SYNTHETIC_METRICS_FILE) } satisfies E2EConfig;

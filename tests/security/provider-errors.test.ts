@@ -4,8 +4,9 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { appendFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { e2eBin } from '../../scripts/e2e-bin.ts';
 
 /** Include binary media, hidden cache, reports and traces in the leak check. */
 async function generatedFiles(directory: string): Promise<string[]> {
@@ -35,7 +36,6 @@ for (const override of [false, true]) {
       matched = request.headers.authorization === 'Bearer ' + key;
       response.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { code: 401, message: diagnostic + ': ' + request.headers.authorization } }));
     });
-    let app: { url: string; close(): Promise<void> } | undefined;
     let child: ReturnType<typeof spawn> | undefined;
     let closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -49,11 +49,9 @@ for (const override of [false, true]) {
       }
       await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
       const address = server.address(); assert.ok(address && typeof address !== 'string');
-      const serve = await import(pathToFileURL(join(project, 'scripts/serve.mjs')).href);
-      app = await serve.startApp();
       const env: NodeJS.ProcessEnv = {
         PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: join(project, '.tmp'),
-        SYNTHETIC_APP_URL: app!.url, SYNTHETIC_SECURITY_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+        SYNTHETIC_SECURITY_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
         OPENROUTER_MODEL: 'security-fixture-no-inference', OPENROUTER_PROVIDER: 'fixture-provider',
         OPENROUTER_API_KEY: override ? 'unused-SYNTHETIC-primary-key-135790' : key,
         ...(override ? { E2E_SECRET_OPENROUTER_API_KEY: key } : {}), OPENROUTER_REQUEST_TIMEOUT_MS: '3000',
@@ -62,7 +60,7 @@ for (const override of [false, true]) {
       };
       await mkdir(env.TMPDIR!, { recursive: true });
       let output = '';
-      child = spawn(process.execPath, [join(root, 'node_modules/e2e/dist/cli/bin.js'), 'run', 'tests/e2e/agent.e2e.ts', '--config', 'e2e.security.config.ts', '--no-cache', '--video', '--output', '.e2e/security'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(process.execPath, [e2eBin(), 'run', 'tests/e2e/agent.e2e.ts', '--config', 'e2e.security.config.ts', '--no-cache', '--video', '--output', '.e2e/security'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
       child.stdout!.on('data', chunk => { output += chunk.toString(); });
       child.stderr!.on('data', chunk => { output += chunk.toString(); });
       const running = child;
@@ -99,7 +97,6 @@ for (const override of [false, true]) {
       }
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
-      await app?.close();
       await rm(project, { recursive: true, force: true });
       if (process.env.SECURITY_EVIDENCE_FILE) {
         Object.assign(evidence, { requests, matched, projectRemoved: await stat(project).then(() => false, () => true) });

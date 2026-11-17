@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { startApp } from './serve.mjs';
+import { e2eBin } from './e2e-bin.ts';
 import { startFixture } from './fixture.ts';
 import { openRouterConfiguration } from './model.ts';
 import { runnerEnvironment } from './runner-environment.ts';
@@ -10,7 +10,6 @@ import { runnerEnvironment } from './runner-environment.ts';
 const mode = process.argv[2];
 if (!['deterministic', 'contract', 'openrouter'].includes(mode)) throw new Error('Modo: deterministic, contract ou openrouter.');
 const root = fileURLToPath(new URL('../', import.meta.url));
-let app;
 let fixture;
 let child;
 let interrupted = false;
@@ -19,20 +18,17 @@ const interrupt = () => { interrupted = true; child?.kill('SIGTERM'); };
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, interrupt);
 try {
   if (mode === 'openrouter') openRouterConfiguration();
-  app = await startApp();
   if (mode === 'contract') fixture = await startFixture('agent');
   if (interrupted) throw new Error('Execução interrompida.');
-  const env = runnerEnvironment(mode, process.env, app.url,
+  const env = runnerEnvironment(mode, process.env,
     fileURLToPath(new URL(`../.e2e/${mode}/requests.ndjson`, import.meta.url)), fixture?.baseURL);
   const config = mode === 'deterministic' ? 'e2e.config.ts' : mode === 'contract' ? 'e2e.contract.config.ts' : 'e2e.openrouter.config.ts';
-  const test = mode === 'deterministic' ? 'deterministic' : 'agent';
   console.log(mode === 'contract' ? 'CONTRATO LOCAL SCRIPTADO: sem inferência.' : `Modo: ${mode}`);
   await rm(new URL(`../.e2e/${mode}/`, import.meta.url), { recursive: true, force: true });
   await mkdir(new URL(`../.e2e/${mode}/`, import.meta.url), { recursive: true });
-  child = spawn(process.execPath, [
-    'node_modules/e2e/dist/cli/bin.js', 'run', `tests/e2e/${test}.e2e.ts`,
-    '--config', config, '--no-cache', '--video', '--output', `.e2e/${mode}`,
-  ], { cwd: root, env, stdio: 'inherit' });
+  // Each config names its own test file and has the runner start and stop the synthetic app.
+  child = spawn(process.execPath, [e2eBin(), 'run', '--config', config, '--no-cache', '--video', '--output', `.e2e/${mode}`],
+    { cwd: root, env, stdio: 'inherit' });
   const exitCode = await new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code, signal) => resolve(signal ? 1 : code ?? 1));
@@ -73,6 +69,5 @@ try {
   process.exitCode = 1;
 } finally {
   await fixture?.close();
-  await app?.close();
   for (const signal of ['SIGINT', 'SIGTERM']) process.removeListener(signal, interrupt);
 }
